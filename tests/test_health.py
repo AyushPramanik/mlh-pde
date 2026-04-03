@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 
 from app import create_app
 
@@ -12,6 +13,7 @@ def client():
 
 
 def test_health_check(client):
-    response = client.get("/health")
+    with patch("app.database.db.connect"), patch("app.database.db.is_closed", return_value=True):
+        response = client.get("/health")
     assert response.status_code == 200
     assert response.get_json()["status"] == "ok"
