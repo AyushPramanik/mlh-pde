@@ -69,7 +69,7 @@ def list_urls():
     if page is not None and per_page is not None:
         query = query.paginate(page, per_page)
 
-    return jsonify(list(query.dicts()))
+    return jsonify([_url_dict(u) for u in query])
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import socket
 from dotenv import load_dotenv
 from flask import Flask, jsonify
 
@@ -31,7 +32,10 @@ def create_app():
 
     @app.route("/health")
     def health():
-        return jsonify(status="ok")
+        return {
+            "status": "ok",
+            "hostname": socket.gethostname(),
+        }
 
     @app.errorhandler(404)
     def not_found(e):
