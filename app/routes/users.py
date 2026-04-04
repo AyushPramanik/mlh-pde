@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 from peewee import IntegrityError
 
+from app.cache import delete_cache, delete_cache_pattern, get_cache, set_cache
 from app.models.user import User
 
 users_bp = Blueprint("users", __name__, url_prefix="/users")
@@ -32,12 +33,19 @@ def list_users():
     page = request.args.get("page", type=int)
     per_page = request.args.get("per_page", type=int)
 
+    cache_key = f"users:list:page={page}:per_page={per_page}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     query = User.select().order_by(User.id)
 
     if page is not None and per_page is not None:
         query = query.paginate(page, per_page)
 
-    return jsonify(list(query.dicts()))
+    result = list(query.dicts())
+    set_cache(cache_key, result)
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +74,7 @@ def create_user():
         except User.DoesNotExist:
             return jsonify({"error": "username or email already exists"}), 409
 
+    delete_cache_pattern("users:list:*")
     return jsonify(_user_dict(user)), 201
 
 
@@ -75,8 +84,14 @@ def create_user():
 
 @users_bp.route("/<int:user_id>", methods=["GET"])
 def get_user(user_id):
+    cache_key = f"users:{user_id}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
-        return jsonify(_user_dict(User.get_by_id(user_id)))
+        result = _user_dict(User.get_by_id(user_id))
+        set_cache(cache_key, result)
+        return jsonify(result)
     except User.DoesNotExist:
         return jsonify({"error": "user not found"}), 404
 
@@ -103,6 +118,8 @@ def update_user(user_id):
     except IntegrityError:
         return jsonify({"error": "username or email already exists"}), 409
 
+    delete_cache(f"users:{user_id}")
+    delete_cache_pattern("users:list:*")
     return jsonify(_user_dict(User.get_by_id(user_id)))
 
 
@@ -118,6 +135,8 @@ def delete_user(user_id):
         return jsonify({"error": "user not found"}), 404
 
     user.delete_instance()
+    delete_cache(f"users:{user_id}")
+    delete_cache_pattern("users:list:*")
     return jsonify({"message": "deleted"}), 200
 
 
