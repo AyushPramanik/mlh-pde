@@ -11,8 +11,4 @@ jobs:
       - run: uv sync
       - name: Run tests with coverage
         run: uv run pytest tests/ -v
-        # pytest-cov is configured in pyproject.toml with --cov-fail-under=50.
-        # This step fails (non-zero exit) if:
-        #   • any test fails, OR
-        #   • coverage drops below 50%
-        # Either failure blocks the workflow and prevents deployment.
+        

@@ -20,9 +20,9 @@ def create_app():
     from app.models.event import Event
     from app.database import db
     try:
-        conn = db.connect()
+        opened = db.connect()          # returns True if a new connection was opened
         db.create_tables([User, URL, Event], safe=True)
-        if not conn:  # reuse_if_open=False means we opened it — close it
+        if opened:
             db.close()
     except Exception:
         pass  # DB unavailable at startup; tables expected to exist on first request

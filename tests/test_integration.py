@@ -81,13 +81,13 @@ def test_shorten_with_title_stores_title(integration_client, tmp_path):
 # GET /<short_code> → resolves from DB
 # ---------------------------------------------------------------------------
 
-def test_resolve_returns_original_url(integration_client):
+def test_resolve_returns_redirect(integration_client):
     resp = integration_client.post("/shorten", json={"url": "https://example.com"})
     short_code = resp.get_json()["short_code"]
 
     resp = integration_client.get(f"/{short_code}")
-    assert resp.status_code == 200
-    assert resp.get_json()["original_url"] == "https://example.com"
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "https://example.com"
 
 
 def test_resolve_unknown_code_returns_404(integration_client):
@@ -190,9 +190,9 @@ def test_full_lifecycle(integration_client, tmp_path):
     assert resp.status_code == 201
     short_code = resp.get_json()["short_code"]
 
-    # Resolve
+    # Resolve — expect 302 redirect
     resp = integration_client.get(f"/{short_code}")
-    assert resp.status_code == 200
+    assert resp.status_code == 302
 
     test_db = SqliteDatabase(str(tmp_path / "test.db"))
     with test_db:
