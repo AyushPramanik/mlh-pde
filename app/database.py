@@ -20,9 +20,14 @@ def init_db(app):
     )
     db.initialize(database)
 
+    from flask import request as _req
+
+    _NO_DB_ROUTES = {"/metrics", "/logs"}
+
     @app.before_request
     def _db_connect():
-        db.connect(reuse_if_open=True)
+        if _req.path not in _NO_DB_ROUTES:
+            db.connect(reuse_if_open=True)
 
     @app.teardown_appcontext
     def _db_close(exc):

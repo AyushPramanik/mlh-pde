@@ -7,6 +7,7 @@ dependencies = [
     "flask>=3.1",
     "peewee>=3.17",
     "psycopg2-binary>=2.9",
+    "psutil>=6.0",
     "python-dotenv>=1.0",
 ]
 
@@ -19,3 +20,4 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=50"
+testpaths = ["tests"]

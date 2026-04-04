@@ -1,7 +1,11 @@
+import logging
 import os
 import time
 
 from app import create_app
+from app.logging_config import configure_logging
+
+logger = configure_logging()
 
 app = create_app()
 
@@ -16,9 +20,13 @@ if __name__ == "__main__":
             from app.database import db
             db.connect()
             db.close()
+            logger.info("db_connected", extra={"attempt": attempt + 1})
             break
         except Exception as e:
-            print(f"DB not ready (attempt {attempt + 1}/10): {e} — retrying in 2s")
+            logger.warning(
+                "db_not_ready",
+                extra={"attempt": attempt + 1, "max_attempts": 10, "error": str(e)},
+            )
             time.sleep(2)
 
     app.run(host=host, port=port, debug=debug)

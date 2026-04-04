@@ -6,6 +6,7 @@ Usage:
 """
 
 import csv
+import logging
 import os
 import sys
 
@@ -14,6 +15,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from app.logging_config import configure_logging
+
+logger = configure_logging()
 
 from peewee import PostgresqlDatabase
 
@@ -39,7 +44,7 @@ def init():
 
 def create_tables():
     db.create_tables([User, URL, Event], safe=True)
-    print("Tables created.")
+    logger.info("tables_created")
 
 
 def seed_users():
@@ -48,7 +53,7 @@ def seed_users():
     with db.atomic():
         for batch in chunks(rows, 100):
             User.insert_many(batch).on_conflict_ignore().execute()
-    print(f"Seeded {len(rows)} users.")
+    logger.info("seeded_users", extra={"count": len(rows)})
 
 
 def seed_urls():
@@ -69,7 +74,7 @@ def seed_urls():
     with db.atomic():
         for batch in chunks(rows, 100):
             URL.insert_many(batch).on_conflict_ignore().execute()
-    print(f"Seeded {len(rows)} URLs.")
+    logger.info("seeded_urls", extra={"count": len(rows)})
 
 
 def seed_events():
@@ -78,7 +83,7 @@ def seed_events():
     with db.atomic():
         for batch in chunks(rows, 100):
             Event.insert_many(batch).on_conflict_ignore().execute()
-    print(f"Seeded {len(rows)} events.")
+    logger.info("seeded_events", extra={"count": len(rows)})
 
 
 def chunks(lst, n):
@@ -93,4 +98,4 @@ if __name__ == "__main__":
     seed_urls()
     seed_events()
     db.close()
-    print("Done.")
+    logger.info("seed_complete")
