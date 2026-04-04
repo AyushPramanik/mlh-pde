@@ -57,14 +57,7 @@ def create_user():
             created_at=datetime.now(timezone.utc),
         )
     except IntegrityError:
-        # If the exact same username+email already exists, return idempotently
-        try:
-            user = User.get(
-                (User.username == data["username"]) & (User.email == data["email"])
-            )
-            return jsonify(_user_dict(user)), 201
-        except User.DoesNotExist:
-            return jsonify({"error": "username or email already exists"}), 409
+        return jsonify({"error": "username or email already exists"}), 409
 
     return jsonify(_user_dict(user)), 201
 
@@ -159,7 +152,7 @@ def bulk_load_users():
         for batch in _chunks(rows, 100):
             User.insert_many(batch).on_conflict_ignore().execute()
 
-    return jsonify({"imported": len(rows)}), 201
+    return jsonify({"loaded": len(rows)}), 201
 
 
 def _chunks(lst, n):
