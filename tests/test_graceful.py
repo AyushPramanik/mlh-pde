@@ -20,10 +20,6 @@ def client():
         yield client
 
 
-# ---------------------------------------------------------------------------
-# Global error handlers — JSON responses, not HTML
-# ---------------------------------------------------------------------------
-
 def test_unknown_route_returns_json_404(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True):
@@ -63,18 +59,14 @@ def test_db_failure_returns_json_500():
     assert response.get_json()["error"] == "internal server error"
 
 
-# ---------------------------------------------------------------------------
-# Users routes
-# ---------------------------------------------------------------------------
-
 def test_list_users_returns_list(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
          patch("app.routes.users.User.select") as mock_select:
-        mock_select.return_value.dicts.return_value = [
+        mock_select.return_value.order_by.return_value.dicts.return_value = [
             {"id": 1, "username": "alice", "email": "alice@example.com"}
         ]
-        response = client.get("/users/")
+        response = client.get("/users")
 
     assert response.status_code == 200
     assert isinstance(response.get_json(), list)
@@ -105,7 +97,7 @@ def test_get_user_not_found(client):
         response = client.get("/users/999")
 
     assert response.status_code == 404
-    assert response.get_json()["error"] == "not found"
+    assert response.get_json()["error"] == "user not found"
 
 
 def test_get_user_urls_found(client):
@@ -132,9 +124,65 @@ def test_get_user_urls_user_not_found(client):
     assert response.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# Events routes
-# ---------------------------------------------------------------------------
+def test_create_user(client):
+    mock_user = MagicMock()
+    mock_user.id = 1
+    mock_user.username = "alice"
+    mock_user.email = "alice@example.com"
+    mock_user.created_at = "2024-01-01"
+
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.create", return_value=mock_user):
+        response = client.post("/users", json={"username": "alice", "email": "alice@example.com"})
+
+    assert response.status_code == 201
+    assert response.get_json()["username"] == "alice"
+
+def test_create_user_missing_fields(client):
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True):
+        response = client.post("/users", json={"username": "alice"})
+    assert response.status_code == 400
+
+def test_update_user(client):
+    mock_user = MagicMock()
+    mock_user.id = 1
+    mock_user.username = "updated"
+    mock_user.email = "alice@example.com"
+    mock_user.created_at = "2024-01-01"
+
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.get_by_id", return_value=mock_user), \
+         patch("app.routes.users.User.update") as mock_update:
+        mock_update.return_value.where.return_value.execute.return_value = 1
+        response = client.put("/users/1", json={"username": "updated"})
+
+    assert response.status_code == 200
+
+def test_update_user_not_found(client):
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.get_by_id", side_effect=User.DoesNotExist):
+        response = client.put("/users/999", json={"username": "x"})
+    assert response.status_code == 404
+
+def test_delete_user(client):
+    mock_user = MagicMock()
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.get_by_id", return_value=mock_user):
+        response = client.delete("/users/1")
+    assert response.status_code == 200
+    assert response.get_json()["message"] == "deleted"
+
+def test_delete_user_not_found(client):
+    with patch("peewee.PostgresqlDatabase.connect"), \
+         patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.get_by_id", side_effect=User.DoesNotExist):
+        response = client.delete("/users/999")
+    assert response.status_code == 404
 
 def test_list_events_returns_list(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
@@ -145,7 +193,6 @@ def test_list_events_returns_list(client):
 
     assert response.status_code == 200
     assert isinstance(response.get_json(), list)
-
 
 def test_get_event_found(client):
     mock_event = MagicMock()
@@ -164,7 +211,6 @@ def test_get_event_found(client):
     assert response.status_code == 200
     assert response.get_json()["event_type"] == "created"
 
-
 def test_get_event_not_found(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
@@ -175,10 +221,6 @@ def test_get_event_not_found(client):
     assert response.get_json()["error"] == "not found"
 
 
-# ---------------------------------------------------------------------------
-# Graceful handling of additional bad inputs
-# ---------------------------------------------------------------------------
-
 def test_shorten_with_ftp_url_returns_400(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True):
@@ -187,14 +229,12 @@ def test_shorten_with_ftp_url_returns_400(client):
     assert response.status_code == 400
     assert response.get_json()["error"] == "invalid url"
 
-
 def test_shorten_with_numeric_url_returns_400(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True):
         response = client.post("/shorten", json={"url": 12345})
 
     assert response.status_code == 400
-
 
 def test_patch_url_no_valid_fields(client):
     mock_url = MagicMock()
