@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, jsonify, redirect, request
 from peewee import IntegrityError
 
+from app.cache import delete_cache, delete_cache_pattern, get_cache, set_cache
 from app.models.event import Event
 from app.models.url import URL
 
@@ -58,6 +59,11 @@ def list_urls():
     page = request.args.get("page", type=int)
     per_page = request.args.get("per_page", type=int)
 
+    cache_key = f"urls:list:user_id={user_id}:is_active={is_active_param}:page={page}:per_page={per_page}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     query = URL.select()
 
     if user_id is not None:
@@ -69,7 +75,9 @@ def list_urls():
     if page is not None and per_page is not None:
         query = query.paginate(page, per_page)
 
-    return jsonify([_url_dict(u) for u in query])
+    result = [_url_dict(u) for u in query]
+    set_cache(cache_key, result)
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +132,7 @@ def create_url():
     if url is None:
         return jsonify({"error": "could not generate unique short code"}), 500
 
+    delete_cache_pattern("urls:list:*")
     return jsonify(_url_dict(url)), 201
 
 
@@ -143,6 +152,7 @@ def shorten():
     if url is None:
         return jsonify({"error": "could not generate unique short code"}), 500
 
+    delete_cache_pattern("urls:list:*")
     return jsonify({"short_code": short_code, "original_url": url.original_url}), 201
 
 
@@ -191,8 +201,14 @@ def bulk_load_urls():
 
 @url_bp.route("/urls/<int:url_id>", methods=["GET"])
 def get_url(url_id):
+    cache_key = f"urls:{url_id}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     try:
-        return jsonify(_url_dict(URL.get_by_id(url_id)))
+        result = _url_dict(URL.get_by_id(url_id))
+        set_cache(cache_key, result)
+        return jsonify(result)
     except URL.DoesNotExist:
         return jsonify({"error": "url not found"}), 404
 
@@ -238,6 +254,10 @@ def update_url(url_id):
         timestamp=now,
         details=json.dumps(changes, default=str),
     )
+
+    delete_cache(f"urls:{url_id}")
+    delete_cache(f"urls:redirect:{url.short_code}")
+    delete_cache_pattern("urls:list:*")
     return jsonify(_url_dict(URL.get_by_id(url_id)))
 
 
@@ -262,6 +282,10 @@ def delete_url(url_id):
         timestamp=now,
         details=json.dumps({"short_code": url.short_code}),
     )
+
+    delete_cache(f"urls:{url_id}")
+    delete_cache(f"urls:redirect:{url.short_code}")
+    delete_cache_pattern("urls:list:*")
     return jsonify({"message": "deleted"}), 200
 
 
@@ -285,8 +309,13 @@ def get_url_events(url_id):
 
 @url_bp.route("/<short_code>", methods=["GET"])
 def redirect_url(short_code):
+    cache_key = f"urls:redirect:{short_code}"
+    original_url = get_cache(cache_key)
+    if original_url is not None:
+        return redirect(original_url, code=302)
     try:
-        url = URL.get((URL.short_code == short_code) & (URL.is_active == True))
+        url = URL.get((URL.short_code == short_code) & URL.is_active)
+        set_cache(cache_key, url.original_url)
         return redirect(url.original_url, code=302)
     except URL.DoesNotExist:
         return jsonify({"error": "not found"}), 404
