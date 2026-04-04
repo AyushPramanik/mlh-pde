@@ -1,15 +1,16 @@
-<<<<<<< HEAD
+
 import json
 import logging
 import sys
 import time
 from flask import Flask, jsonify, g, request
-=======
 import socket
->>>>>>> e17869cdf4243851c2218c52ead0c22089157e00
 from dotenv import load_dotenv
 from app.database import init_db
 from app.routes import register_routes
+import os
+import psutil
+
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -51,6 +52,15 @@ def create_app():
         duration = round((time.time() - g.start_time) * 1000, 2)
         logger.info(f"Request finished: {request.method} {request.path} status={response.status_code} duration={duration}ms")
         return response
+    
+    @app.route("/metrics")
+    def metrics():
+        process = psutil.Process(os.getpid())
+        return jsonify({
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_mb": round(process.memory_info().rss / 1024 / 1024, 2),
+            "uptime_seconds": round(time.time() - process.create_time(), 2)
+        })  
 
 
     init_db(app)
