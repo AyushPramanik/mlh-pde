@@ -4,12 +4,39 @@ import socket
 import time
 
 import psutil
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, render_template, request
 from dotenv import load_dotenv
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.database import init_db
 from app.logging_config import LOG_FILE, configure_logging
+from app.prometheus_metrics import (
+    REGISTRY,
+    active_requests,
+    http_request_duration_seconds,
+    http_requests_total,
+    process_cpu_percent,
+    process_memory_bytes,
+)
 from app.routes import register_routes
+
+# normalise dynamic path segments so Prometheus cardinality stays bounded
+_PARAM_PATTERNS = [
+    # /urls/123  → /urls/<id>
+    ("/urls/", "id"),
+    ("/users/", "id"),
+    ("/events/", "id"),
+]
+
+
+def _normalise(path: str) -> str:
+    for prefix, label in _PARAM_PATTERNS:
+        if path.startswith(prefix):
+            rest = path[len(prefix):]
+            if rest and rest.split("/")[0].isdigit():
+                suffix = rest[rest.find("/"):] if "/" in rest else ""
+                return f"{prefix}<{label}>{suffix}"
+    return path
 
 
 def create_app():
@@ -23,7 +50,6 @@ def create_app():
 
     from app import models  # noqa: F401 - registers models with Peewee
 
-    # Create tables if they don't exist (safe=True is a no-op when they do)
     from app.models.user import User
     from app.models.url import URL
     from app.models.event import Event
@@ -64,12 +90,31 @@ def create_app():
     @app.before_request
     def _before():
         g.start_time = time.perf_counter()
+        active_requests.inc()
 
     @app.after_request
     def _after(response):
         start = getattr(g, "start_time", None)
-        duration_ms = round((time.perf_counter() - start) * 1000, 2) if start else None
+        duration = (time.perf_counter() - start) if start else 0
+        duration_ms = round(duration * 1000, 2)
+
+        endpoint = _normalise(request.path)
+
+        # Prometheus
+        active_requests.dec()
+        http_requests_total.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status=str(response.status_code),
+        ).inc()
+        http_request_duration_seconds.labels(
+            method=request.method,
+            endpoint=endpoint,
+        ).observe(duration)
+
+        # Sliding-window store (used by alert manager)
         metrics_store.record(response.status_code)
+
         logger.info(
             "request",
             extra={
@@ -88,18 +133,22 @@ def create_app():
 
     @app.route("/health")
     def health():
-        return {
-            "status": "ok",
-            "hostname": socket.gethostname(),
-        }
+        return {"status": "ok", "hostname": socket.gethostname()}
 
     @app.route("/metrics")
     def metrics():
+        proc = psutil.Process()
         mem = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=0.1)
+
+        # update saturation gauges so /prometheus reflects latest values
+        process_cpu_percent.set(cpu)
+        process_memory_bytes.set(proc.memory_info().rss)
+
         snap = metrics_store.snapshot()
         return jsonify(
             {
-                "cpu_percent": psutil.cpu_percent(interval=0.1),
+                "cpu_percent": cpu,
                 "memory": {
                     "total_mb": round(mem.total / 1024 / 1024, 2),
                     "used_mb": round(mem.used / 1024 / 1024, 2),
@@ -110,6 +159,14 @@ def create_app():
                 "hostname": socket.gethostname(),
             }
         )
+
+    @app.route("/prometheus")
+    def prometheus():
+        """Prometheus scrape endpoint (text/plain exposition format)."""
+        proc = psutil.Process()
+        process_cpu_percent.set(psutil.cpu_percent(interval=None))
+        process_memory_bytes.set(proc.memory_info().rss)
+        return generate_latest(REGISTRY), 200, {"Content-Type": CONTENT_TYPE_LATEST}
 
     @app.route("/alert-status")
     def alert_status():
@@ -128,6 +185,10 @@ def create_app():
             return jsonify([json.loads(line) for line in recent if line.strip()])
         except FileNotFoundError:
             return jsonify([])
+
+    @app.route("/dashboard")
+    def dashboard():
+        return render_template("dashboard.html")
 
     # ------------------------------------------------------------------
     # Error handlers

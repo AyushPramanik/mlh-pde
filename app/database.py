@@ -22,7 +22,7 @@ def init_db(app):
 
     from flask import request as _req
 
-    _NO_DB_ROUTES = {"/metrics", "/logs"}
+    _NO_DB_ROUTES = {"/metrics", "/logs", "/prometheus", "/dashboard", "/alert-status"}
 
     @app.before_request
     def _db_connect():

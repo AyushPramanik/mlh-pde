@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: hackathon
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/provisioning/dashboards
