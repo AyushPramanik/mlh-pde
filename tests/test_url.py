@@ -16,11 +16,13 @@ def client():
 
 def test_shorten_creates_url(client):
     mock_url = MagicMock()
+    mock_url.id = 1
     mock_url.original_url = "https://example.com"
 
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
-         patch("app.routes.url.URL.create", return_value=mock_url):
+         patch("app.routes.url.URL.create", return_value=mock_url), \
+         patch("app.routes.url.Event.create"):
         response = client.post("/shorten", json={"url": "https://example.com"})
 
     assert response.status_code == 201
