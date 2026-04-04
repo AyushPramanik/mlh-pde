@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import time
 
@@ -28,7 +29,7 @@ def create_app():
     from app.models.event import Event
     from app.database import db
     try:
-        opened = db.connect()          # returns True if a new connection was opened
+        opened = db.connect()
         db.create_tables([User, URL, Event], safe=True)
         if opened:
             db.close()
@@ -38,7 +39,26 @@ def create_app():
     register_routes(app)
 
     # ------------------------------------------------------------------
-    # Request / response logging
+    # Alerting — start background monitor (skip in test mode)
+    # ------------------------------------------------------------------
+
+    from app.metrics_store import store as metrics_store
+    from app.alerting import AlertManager, EmailNotifier
+
+    if not app.config.get("TESTING"):
+        db_config = {
+            "host": os.environ.get("DATABASE_HOST", "localhost"),
+            "port": int(os.environ.get("DATABASE_PORT", 5432)),
+            "name": os.environ.get("DATABASE_NAME", "hackathon_db"),
+            "user": os.environ.get("DATABASE_USER", "postgres"),
+            "password": os.environ.get("DATABASE_PASSWORD", "postgres"),
+        }
+        alert_manager = AlertManager(EmailNotifier(), metrics_store, db_config)
+        alert_manager.start()
+        app.alert_manager = alert_manager
+
+    # ------------------------------------------------------------------
+    # Request / response logging + metrics recording
     # ------------------------------------------------------------------
 
     @app.before_request
@@ -49,6 +69,7 @@ def create_app():
     def _after(response):
         start = getattr(g, "start_time", None)
         duration_ms = round((time.perf_counter() - start) * 1000, 2) if start else None
+        metrics_store.record(response.status_code)
         logger.info(
             "request",
             extra={
@@ -75,6 +96,7 @@ def create_app():
     @app.route("/metrics")
     def metrics():
         mem = psutil.virtual_memory()
+        snap = metrics_store.snapshot()
         return jsonify(
             {
                 "cpu_percent": psutil.cpu_percent(interval=0.1),
@@ -84,9 +106,17 @@ def create_app():
                     "available_mb": round(mem.available / 1024 / 1024, 2),
                     "percent": mem.percent,
                 },
+                "requests": snap,
                 "hostname": socket.gethostname(),
             }
         )
+
+    @app.route("/alert-status")
+    def alert_status():
+        mgr = getattr(app, "alert_manager", None)
+        if mgr is None:
+            return jsonify({"error": "alerting not running (test mode)"}), 503
+        return jsonify(mgr.status())
 
     @app.route("/logs")
     def logs():
