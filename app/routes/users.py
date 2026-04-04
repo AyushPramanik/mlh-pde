@@ -23,8 +23,8 @@ def get_user(user_id):
 @users_bp.route("/<int:user_id>/urls", methods=["GET"])
 def get_user_urls(user_id):
     try:
-        User.get_by_id(user_id)
+        user = User.get_by_id(user_id)
     except User.DoesNotExist:
         return jsonify({"error": "not found"}), 404
-    urls = list(User.get_by_id(user_id).urls.dicts())
+    urls = list(user.urls.dicts())
     return jsonify(urls)

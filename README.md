@@ -104,7 +104,77 @@ Returned only in the rare case that short-code generation exhausts all retries d
 
 Response: `{"error": "could not generate unique short code"}`
 
-All other unhandled exceptions surface as Flask's default 500 response.
+All errors — including unhandled exceptions and database failures — go through the global `@app.errorhandler(500)` handler and return JSON, never an HTML stack trace.
+
+---
+
+## Failure Manual
+
+Documents exactly what happens when things break in production.
+
+### 1. Database connection lost mid-deployment
+**What happens:** `before_request` calls `db.connect()`, which raises `peewee.OperationalError`.  
+**App response:** Global 500 handler catches it → `{"error": "internal server error"}` with status 500.  
+**Recovery:** Docker's `restart: always` restarts the container. Once the DB is reachable, subsequent requests succeed.
+
+### 2. Database connection lost during a request
+**What happens:** A DB query (e.g. `URL.create(...)`) raises `OperationalError` after the connection dropped mid-flight.  
+**App response:** Flask catches the unhandled exception → 500 JSON response. The failed write is not committed (Peewee has no implicit transaction here — partial state is avoided because the DB rejected it).  
+**Recovery:** Client retries; next request opens a fresh connection (`reuse_if_open=True`).
+
+### 3. Short-code collision (duplicate `short_code`)
+**What happens:** Two concurrent requests generate the same 6-character code. The second `URL.create()` raises `peewee.IntegrityError`.  
+**App response:** Route retries up to 5 times with a new random code. If all 5 collide (probability ~1 in 10^28 for a non-full table), returns 500 `{"error": "could not generate unique short code"}`.  
+**Recovery:** Client retries the `POST /shorten` request.
+
+### 4. Request to unknown route or wrong HTTP method
+**What happens:** Flask cannot match the route.  
+**App response:** Global 404/405 handler returns JSON — never an HTML "Not Found" page.
+
+### 5. Container crash (Chaos Mode)
+**What happens:** The `web` process exits unexpectedly (OOM kill, segfault, `kill -9`).  
+**App response:** Docker's `restart: always` policy detects the exit and restarts the container automatically, typically within 1–2 seconds.  
+**To demonstrate:**
+```bash
+docker compose up -d
+docker kill $(docker compose ps -q web)   # simulate crash
+docker compose ps                          # web restarts automatically
+curl http://localhost:5000/health          # {"status": "ok"}
+```
+
+### 6. Bad input from client
+**What happens:** Client sends malformed JSON, missing fields, wrong types, or invalid URLs.  
+**App response:** Validated at the route level before any DB operation. Returns 400 with a specific error message. The DB is never touched.
+
+### 7. PostgreSQL container restarts (data persistence)
+**What happens:** The `db` container restarts.  
+**App response:** The `web` container retries connections on the next request. Data persists because the `postgres_data` Docker volume survives container restarts.
+
+---
+
+## Chaos Mode (Docker)
+
+```bash
+# Start the app and database
+docker compose up -d
+
+# Seed the database
+docker compose exec web uv run python seed/seed.py
+
+# Verify the app is running
+curl http://localhost:5000/health
+
+# Simulate a crash — Docker will restart the container automatically
+docker kill $(docker compose ps -q web)
+
+# Watch it come back
+watch docker compose ps
+
+# App is alive again
+curl http://localhost:5000/health
+```
+
+`restart: always` in `docker-compose.yml` is what ensures automatic recovery. The `db` service also has `restart: always` so both tiers self-heal.
 
 ## Tips
 
