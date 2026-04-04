@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Command Center — mlh-pe-hackathon</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2a2d3e;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+      --green:   #22c55e;
+      --yellow:  #eab308;
+      --red:     #ef4444;
+      --blue:    #3b82f6;
+      --purple:  #a855f7;
+      --cyan:    #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+    header h1 span { color: var(--blue); }
+    #refresh-badge {
+      font-size: 12px; color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    #refresh-badge .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    main { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* --- Stat row -------------------------------------------------------- */
+    .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    @media(max-width:900px){ .stat-row { grid-template-columns: repeat(2,1fr); } }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .stat-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 8px; }
+    .stat-card .value { font-size: 32px; font-weight: 700; line-height: 1; }
+    .stat-card .sub   { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .stat-card.ok    .value { color: var(--green); }
+    .stat-card.warn  .value { color: var(--yellow); }
+    .stat-card.crit  .value { color: var(--red); }
+    .stat-card.info  .value { color: var(--blue); }
+
+    /* --- Charts ---------------------------------------------------------- */
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media(max-width:900px){ .chart-row { grid-template-columns: 1fr; } }
+    .chart-row.full { grid-template-columns: 1fr; }
+
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .chart-card h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+    .chart-card canvas { max-height: 200px; }
+
+    /* --- Alerts ---------------------------------------------------------- */
+    .alert-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .alert-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px 20px; display: flex; align-items: center; gap: 14px;
+    }
+    .alert-card .icon { font-size: 28px; }
+    .alert-card .info .name { font-weight: 600; margin-bottom: 4px; }
+    .alert-card .info .state { font-size: 12px; }
+    .alert-card.firing { border-color: var(--red); }
+    .alert-card.ok     { border-color: var(--green); }
+
+    /* --- Logs ------------------------------------------------------------ */
+    .log-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .log-card h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+    .log-list { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
+    .log-entry {
+      display: grid; grid-template-columns: 180px 52px 1fr; gap: 12px; align-items: baseline;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px;
+      padding: 4px 8px; border-radius: 4px;
+    }
+    .log-entry:hover { background: rgba(255,255,255,.04); }
+    .log-entry .ts   { color: var(--muted); }
+    .log-entry .lvl  { font-weight: 700; text-align: right; }
+    .log-entry .msg  { color: var(--text); word-break: break-all; }
+    .lvl-INFO  { color: var(--blue); }
+    .lvl-WARN  { color: var(--yellow); }
+    .lvl-WARNING { color: var(--yellow); }
+    .lvl-ERROR { color: var(--red); }
+    .lvl-DEBUG { color: var(--muted); }
+
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Command <span>Center</span></h1>
+  <div id="refresh-badge">
+    <div class="dot"></div>
+    <span id="last-updated">Connecting…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Golden Signals ─────────────────────────────────────────────── -->
+  <div class="stat-row">
+    <div class="stat-card info" id="card-rps">
+      <div class="label">Traffic · req/s</div>
+      <div class="value" id="stat-rps">—</div>
+      <div class="sub" id="stat-rps-total">—</div>
+    </div>
+    <div class="stat-card ok" id="card-error">
+      <div class="label">Errors · 5xx rate</div>
+      <div class="value" id="stat-error">—</div>
+      <div class="sub" id="stat-error-count">—</div>
+    </div>
+    <div class="stat-card ok" id="card-cpu">
+      <div class="label">Saturation · CPU%</div>
+      <div class="value" id="stat-cpu">—</div>
+      <div class="sub" id="stat-mem">—</div>
+    </div>
+    <div class="stat-card ok" id="card-mem">
+      <div class="label">Saturation · Memory</div>
+      <div class="value" id="stat-mem-used">—</div>
+      <div class="sub" id="stat-mem-pct">—</div>
+    </div>
+  </div>
+
+  <!-- ── Alert Status ───────────────────────────────────────────────── -->
+  <div class="alert-row">
+    <div class="alert-card ok" id="alert-service_down">
+      <div class="icon" id="alert-icon-service_down">✅</div>
+      <div class="info">
+        <div class="name">Service Down</div>
+        <div class="state" id="alert-state-service_down">OK — DB reachable</div>
+      </div>
+    </div>
+    <div class="alert-card ok" id="alert-high_error_rate">
+      <div class="icon" id="alert-icon-high_error_rate">✅</div>
+      <div class="info">
+        <div class="name">High Error Rate</div>
+        <div class="state" id="alert-state-high_error_rate">OK — error rate normal</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Charts ─────────────────────────────────────────────────────── -->
+  <div class="chart-row">
+    <div class="chart-card">
+      <h3>Request Rate &amp; Errors (2-min window)</h3>
+      <canvas id="chart-traffic"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Error Rate %</h3>
+      <canvas id="chart-error-rate"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-row">
+    <div class="chart-card">
+      <h3>CPU Utilisation %</h3>
+      <canvas id="chart-cpu"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Memory Usage (MB)</h3>
+      <canvas id="chart-memory"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Recent Logs ────────────────────────────────────────────────── -->
+  <div class="log-card">
+    <h3>Recent Logs (last 25)</h3>
+    <div class="log-list" id="log-list"></div>
+  </div>
+
+</main>
+
+<footer>Auto-refreshes every 10 s · <a href="/prometheus" style="color:var(--blue)">Prometheus endpoint</a> · <a href="/alert-status" style="color:var(--blue)">Alert status</a></footer>
+
+<script>
+// ─── Chart factory ──────────────────────────────────────────────────────────
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: true,
+  animation: { duration: 300 },
+  plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 11 } } } },
+  scales: {
+    x: { ticks: { color: '#475569', maxTicksLimit: 6, font: { size: 11 } }, grid: { color: '#1e2235' } },
+    y: { ticks: { color: '#475569', font: { size: 11 } }, grid: { color: '#1e2235' } },
+  },
+};
+
+function makeChart(id, datasets, yMax) {
+  const ctx = document.getElementById(id).getContext('2d');
+  const opts = JSON.parse(JSON.stringify(CHART_DEFAULTS));
+  if (yMax !== undefined) opts.scales.y.max = yMax;
+  return new Chart(ctx, { type: 'line', data: { labels: [], datasets }, options: opts });
+}
+
+const MAX_POINTS = 30;
+function push(chart, label, ...values) {
+  chart.data.labels.push(label);
+  if (chart.data.labels.length > MAX_POINTS) chart.data.labels.shift();
+  chart.data.datasets.forEach((ds, i) => {
+    ds.data.push(values[i] ?? 0);
+    if (ds.data.length > MAX_POINTS) ds.data.shift();
+  });
+  chart.update('none');
+}
+
+// ─── Chart instances ────────────────────────────────────────────────────────
+const trafficChart = makeChart('chart-traffic', [
+  { label: 'Total req (2 min)', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.1)', tension: 0.3, fill: true, pointRadius: 2 },
+  { label: '5xx errors (2 min)', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.1)', tension: 0.3, fill: true, pointRadius: 2 },
+]);
+
+const errorRateChart = makeChart('chart-error-rate', [
+  { label: 'Error rate %', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.12)', tension: 0.3, fill: true, pointRadius: 2 },
+], 100);
+errorRateChart.options.scales.y.min = 0;
+
+const cpuChart = makeChart('chart-cpu', [
+  { label: 'CPU %', data: [], borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,.12)', tension: 0.3, fill: true, pointRadius: 2 },
+], 100);
+
+const memChart = makeChart('chart-memory', [
+  { label: 'Used MB', data: [], borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,.12)', tension: 0.3, fill: true, pointRadius: 2 },
+]);
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function colorClass(value, warnAt, critAt) {
+  if (value >= critAt) return 'crit';
+  if (value >= warnAt) return 'warn';
+  return 'ok';
+}
+
+function setCard(id, cls) {
+  const el = document.getElementById(id);
+  el.className = `stat-card ${cls}`;
+}
+
+function ts() { return new Date().toLocaleTimeString(); }
+
+// ─── Fetch & render ─────────────────────────────────────────────────────────
+async function fetchMetrics() {
+  try {
+    const r = await fetch('/metrics');
+    if (!r.ok) return;
+    const d = await r.json();
+    const t = ts();
+
+    // Stats
+    const total   = d.requests?.total ?? 0;
+    const errors  = d.requests?.errors ?? 0;
+    const errRate = d.requests?.error_rate ?? 0;
+    const window  = d.requests?.window_seconds ?? 120;
+    const rps     = (total / window).toFixed(2);
+    const cpu     = d.cpu_percent ?? 0;
+    const usedMb  = d.memory?.used_mb ?? 0;
+    const memPct  = d.memory?.percent ?? 0;
+
+    document.getElementById('stat-rps').textContent        = rps;
+    document.getElementById('stat-rps-total').textContent  = `${total} req in ${window}s window`;
+    document.getElementById('stat-error').textContent      = `${(errRate * 100).toFixed(1)}%`;
+    document.getElementById('stat-error-count').textContent= `${errors} errors / ${total} requests`;
+    document.getElementById('stat-cpu').textContent        = `${cpu.toFixed(1)}%`;
+    document.getElementById('stat-mem').textContent        = `${usedMb.toFixed(0)} MB used`;
+    document.getElementById('stat-mem-used').textContent   = `${usedMb.toFixed(0)} MB`;
+    document.getElementById('stat-mem-pct').textContent    = `${memPct}% of ${d.memory?.total_mb?.toFixed(0)} MB`;
+
+    // Color coding
+    setCard('card-error', colorClass(errRate * 100, 5, 10));
+    setCard('card-cpu',   colorClass(cpu, 70, 90));
+    setCard('card-mem',   colorClass(memPct, 80, 95));
+    setCard('card-rps',   'info');
+
+    // Charts
+    push(trafficChart,   t, total, errors);
+    push(errorRateChart, t, (errRate * 100).toFixed(1));
+    push(cpuChart,       t, cpu.toFixed(1));
+    push(memChart,       t, usedMb.toFixed(1));
+
+  } catch (e) { console.warn('metrics fetch failed', e); }
+}
+
+async function fetchAlerts() {
+  try {
+    const r = await fetch('/alert-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.alerts) return;
+    for (const [name, state] of Object.entries(d.alerts)) {
+      const card  = document.getElementById(`alert-${name}`);
+      const icon  = document.getElementById(`alert-icon-${name}`);
+      const label = document.getElementById(`alert-state-${name}`);
+      if (!card) continue;
+      if (state.firing) {
+        card.className = 'alert-card firing';
+        icon.textContent = '🔥';
+        label.textContent = 'FIRING — alert active';
+        label.style.color = 'var(--red)';
+      } else {
+        card.className = 'alert-card ok';
+        icon.textContent = '✅';
+        label.style.color = '';
+        label.textContent = name === 'service_down' ? 'OK — DB reachable' : 'OK — error rate normal';
+      }
+    }
+  } catch (e) { console.warn('alert-status fetch failed', e); }
+}
+
+async function fetchLogs() {
+  try {
+    const r = await fetch('/logs?limit=25');
+    if (!r.ok) return;
+    const entries = await r.json();
+    const list = document.getElementById('log-list');
+    list.innerHTML = '';
+    for (const e of [...entries].reverse()) {
+      const row = document.createElement('div');
+      row.className = 'log-entry';
+      const t   = (e.timestamp ?? '').replace('T', ' ').replace('+00:00', 'Z').substring(0, 22);
+      const lvl = e.level ?? 'INFO';
+      let msg = e.message ?? '';
+      if (e.method) msg += `  ${e.method} ${e.path} → ${e.status}  (${e.duration_ms}ms)`;
+      row.innerHTML = `<span class="ts">${t}</span><span class="lvl lvl-${lvl}">${lvl}</span><span class="msg">${msg}</span>`;
+      list.appendChild(row);
+    }
+  } catch (e) { console.warn('logs fetch failed', e); }
+}
+
+async function refresh() {
+  await Promise.all([fetchMetrics(), fetchAlerts(), fetchLogs()]);
+  document.getElementById('last-updated').textContent = 'Last updated ' + ts();
+}
+
+// ─── Boot ───────────────────────────────────────────────────────────────────
+refresh();
+setInterval(refresh, 10_000);
+</script>
+</body>
+</html>

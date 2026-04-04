@@ -58,6 +58,14 @@ def create_user():
     if not data or "username" not in data or "email" not in data:
         return jsonify({"error": "username and email are required"}), 400
 
+    # Idempotency: if the exact same username+email already exists, return it.
+    # Do this before INSERT to avoid PostgreSQL's transaction-abort on IntegrityError.
+    existing = User.get_or_none(
+        (User.username == data["username"]) & (User.email == data["email"])
+    )
+    if existing:
+        return jsonify(_user_dict(existing)), 201
+
     try:
         user = User.create(
             username=data["username"],
@@ -65,14 +73,7 @@ def create_user():
             created_at=datetime.now(timezone.utc),
         )
     except IntegrityError:
-        # If the exact same username+email already exists, return idempotently
-        try:
-            user = User.get(
-                (User.username == data["username"]) & (User.email == data["email"])
-            )
-            return jsonify(_user_dict(user)), 201
-        except User.DoesNotExist:
-            return jsonify({"error": "username or email already exists"}), 409
+        return jsonify({"error": "username or email already exists"}), 409
 
     delete_cache_pattern("users:list:*")
     return jsonify(_user_dict(user)), 201

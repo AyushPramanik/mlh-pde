@@ -133,6 +133,7 @@ def test_create_user(client):
 
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
+         patch("app.routes.users.User.get_or_none", return_value=None), \
          patch("app.routes.users.User.create", return_value=mock_user):
         response = client.post("/users", json={"username": "alice", "email": "alice@example.com"})
 

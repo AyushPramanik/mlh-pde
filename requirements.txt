@@ -7,3 +7,6 @@ pytest>=9.0.2
 pytest-cov>=7.1.0
 python-dotenv>=1.0
 redis>=5.0
+psutil>=6.0
+prometheus-client>=0.24.1
+python-dotenv>=1.0
