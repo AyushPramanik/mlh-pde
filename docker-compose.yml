@@ -11,8 +11,12 @@ services:
       DATABASE_PASSWORD: postgres
       DATABASE_PORT: "5432"
       FLASK_HOST: "0.0.0.0"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   db:
@@ -30,6 +34,14 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   prometheus:
     image: prom/prometheus:v2.51.0
     restart: always
