@@ -5,4 +5,5 @@ peewee>=3.17
 psycopg2-binary>=2.9
 pytest>=9.0.2
 pytest-cov>=7.1.0
+psutil>=6.0
 python-dotenv>=1.0
