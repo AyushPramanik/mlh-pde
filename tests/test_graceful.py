@@ -188,8 +188,8 @@ def test_list_events_returns_list(client):
     with patch("peewee.PostgresqlDatabase.connect"), \
          patch("peewee.PostgresqlDatabase.is_closed", return_value=True), \
          patch("app.routes.events.Event.select") as mock_select:
-        mock_select.return_value.dicts.return_value = []
-        response = client.get("/events/")
+        mock_select.return_value.__iter__ = lambda self: iter([])
+        response = client.get("/events")
 
     assert response.status_code == 200
     assert isinstance(response.get_json(), list)

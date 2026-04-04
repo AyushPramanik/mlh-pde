@@ -3,7 +3,7 @@ services:
     build: .
     restart: always          # Docker restarts the container automatically if it crashes
     ports:
-      - "5001:5000"
+      - "5000:5000"
     environment:
       DATABASE_HOST: db
       DATABASE_NAME: hackathon_db

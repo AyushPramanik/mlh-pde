@@ -1,8 +1,12 @@
+<<<<<<< HEAD
 import json
 import logging
 import sys
 import time
 from flask import Flask, jsonify, g, request
+=======
+import socket
+>>>>>>> e17869cdf4243851c2218c52ead0c22089157e00
 from dotenv import load_dotenv
 from app.database import init_db
 from app.routes import register_routes
@@ -72,7 +76,10 @@ def create_app():
 
     @app.route("/health")
     def health():
-        return jsonify(status="ok")
+        return {
+            "status": "ok",
+            "hostname": socket.gethostname(),
+        }
 
     @app.errorhandler(404)
     def not_found(e):
