@@ -9,4 +9,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync
-      - run: uv run pytest tests/ -v
+      - name: Run tests with coverage
+        run: uv run pytest tests/ -v
+        # pytest-cov is configured in pyproject.toml with --cov-fail-under=50.
+        # This step fails (non-zero exit) if:
+        #   • any test fails, OR
+        #   • coverage drops below 50%
+        # Either failure blocks the workflow and prevents deployment.
