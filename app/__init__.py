@@ -36,7 +36,8 @@ def setup_logging():
 
 
 def create_app():
-    load_dotenv()
+    # Load environment from .env and allow it to override existing env vars
+    load_dotenv(override=True)
     setup_logging()
     logger = logging.getLogger(__name__)
 
@@ -62,7 +63,20 @@ def create_app():
 
     # Alerting
     from app.metrics_store import store as metrics_store
-    from app.alerting import AlertManager, EmailNotifier
+    from app.alerting import AlertManager, EmailNotifier, DiscordNotifier
+
+    @app.route("/test-alert")
+    def test_alert():
+        mgr = getattr(app, "alert_manager", None)
+        if mgr is None:
+            return jsonify({"error": "alert manager not running"}), 503
+        for notifier in mgr._notifiers:
+            notifier.send(
+                "[TEST] Alert Fired",
+                "This is a test alert from your incident response system."
+            )
+        return jsonify({"status": "test alert sent"})
+    
 
     if not app.config.get("TESTING"):
         db_config = {
@@ -72,7 +86,12 @@ def create_app():
             "user": os.environ.get("DATABASE_USER", "postgres"),
             "password": os.environ.get("DATABASE_PASSWORD", "postgres"),
         }
-        alert_manager = AlertManager(EmailNotifier(), metrics_store, db_config)
+        alert_manager = AlertManager(
+                    notifiers=[EmailNotifier(), DiscordNotifier()],
+                    metrics_store=metrics_store,
+                    db_config=db_config
+                )
+        
         alert_manager.start()
         app.alert_manager = alert_manager
 

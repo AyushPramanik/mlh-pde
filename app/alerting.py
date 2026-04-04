@@ -1,6 +1,6 @@
 """
-Alert manager: evaluates alert rules on a background thread and sends email
-notifications when thresholds are breached.
+Alert manager: evaluates alert rules on a background thread and sends
+email and Discord notifications when thresholds are breached.
 
 Supported alerts
 ----------------
@@ -10,30 +10,34 @@ high_error_rate — >ALERT_ERROR_RATE_THRESHOLD of requests are 5xx
 
 Configuration (env vars)
 ------------------------
-SMTP_HOST                 default: smtp.gmail.com
-SMTP_PORT                 default: 587
-SMTP_USER                 Gmail / SMTP username  (required to send)
-SMTP_PASSWORD             Gmail app-password     (required to send)
-ALERT_EMAIL_FROM          defaults to SMTP_USER
-ALERT_EMAIL_TO            recipient address      (required to send)
-ALERT_CHECK_INTERVAL      seconds between checks, default 30
-ALERT_COOLDOWN_SECONDS    min seconds between repeat alerts, default 300
-ALERT_ERROR_RATE_THRESHOLD  0.0–1.0, default 0.10 (10 %)
-ALERT_MIN_REQUESTS        min requests in window before error-rate fires, default 5
+SMTP_HOST                   default: smtp.gmail.com
+SMTP_PORT                   default: 587
+SMTP_USER                   Gmail / SMTP username  (required to send)
+SMTP_PASSWORD               Gmail app-password     (required to send)
+ALERT_EMAIL_FROM            defaults to SMTP_USER
+ALERT_EMAIL_TO              recipient address      (required to send)
+DISCORD_WEBHOOK_URL         Discord webhook URL    (required for Discord)
+ALERT_CHECK_INTERVAL        seconds between checks, default 30
+ALERT_COOLDOWN_SECONDS      min seconds between repeat alerts, default 300
+ALERT_ERROR_RATE_THRESHOLD  0.0-1.0, default 0.10 (10%)
+ALERT_MIN_REQUESTS          min requests in window before error-rate fires, default 5
 """
 
+import json
 import logging
 import os
 import smtplib
 import threading
 import time
+import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 logger = logging.getLogger("app.alerting")
 
-# --- tunables (read once at import time; restart required to change) ----------
+# --- tunables ----------------------------------------------------------------
 _CHECK_INTERVAL = int(os.environ.get("ALERT_CHECK_INTERVAL", "30"))
 _COOLDOWN = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "300"))
 _ERROR_RATE_THRESHOLD = float(os.environ.get("ALERT_ERROR_RATE_THRESHOLD", "0.10"))
@@ -52,7 +56,6 @@ class AlertState:
     _last_fired: float = field(default=0.0, init=False, repr=False)
 
     def fire(self) -> bool:
-        """Mark as firing. Returns True only on a *new* fire (respects cooldown)."""
         if time.time() - self._last_fired > self.cooldown:
             self._firing = True
             self._last_fired = time.time()
@@ -60,7 +63,6 @@ class AlertState:
         return False
 
     def resolve(self) -> bool:
-        """Mark as resolved. Returns True if state actually changed."""
         if self._firing:
             self._firing = False
             return True
@@ -92,13 +94,11 @@ class EmailNotifier:
         if not self.configured:
             logger.warning("alert_email_skipped", extra={"reason": "SMTP_USER or ALERT_EMAIL_TO not set"})
             return
-
         msg = MIMEMultipart()
         msg["Subject"] = subject
         msg["From"] = self.from_addr
         msg["To"] = self.to_addr
         msg.attach(MIMEText(body, "plain"))
-
         try:
             with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as smtp:
                 smtp.ehlo()
@@ -111,12 +111,78 @@ class EmailNotifier:
 
 
 # ---------------------------------------------------------------------------
+# Discord notifier
+# ---------------------------------------------------------------------------
+
+class DiscordNotifier:
+    def __init__(self):
+        self.webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.webhook_url)
+    def send(self, subject: str, body: str) -> None:
+        if not self.configured:
+            logger.warning("discord_alert_skipped", extra={"reason": "DISCORD_WEBHOOK_URL not set"})
+            return
+        payload = json.dumps({"content": f"**{subject}**\n{body}"}).encode("utf-8")
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "mlh-pde/1.0",
+            }
+            req = urllib.request.Request(
+                self.webhook_url,
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read()
+            logger.info("discord_alert_sent", extra={"subject": subject})
+        except urllib.error.HTTPError as e:
+            try:
+                resp_body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                resp_body = "<unreadable response body>"
+            logger.error(
+                "discord_alert_failed",
+                extra={
+                    "error": f"HTTP {e.code} {getattr(e, 'reason', '')}",
+                    "status": getattr(e, 'code', None),
+                    "response": resp_body,
+                    "webhook": self._masked_webhook(),
+                },
+            )
+        except urllib.error.URLError as e:
+            logger.error("discord_alert_failed", extra={"error": f"URL error: {getattr(e, 'reason', e)}"})
+        except Exception as e:
+            logger.error("discord_alert_failed", extra={"error": str(e)})
+
+    def _masked_webhook(self) -> str:
+        if not self.webhook_url:
+            return ""
+        try:
+            parts = self.webhook_url.split("/")
+            if len(parts) >= 2:
+                token = parts[-1]
+                if len(token) > 8:
+                    token_mask = token[:4] + "..." + token[-4:]
+                else:
+                    token_mask = "****"
+                return "/".join(parts[:-1]) + "/" + token_mask
+        except Exception:
+            pass
+        return "<masked>"
+
+
+# ---------------------------------------------------------------------------
 # Alert manager
 # ---------------------------------------------------------------------------
 
 class AlertManager:
-    def __init__(self, notifier: EmailNotifier, metrics_store, db_config: dict):
-        self._notifier = notifier
+    def __init__(self, notifiers: list, metrics_store, db_config: dict):
+        self._notifiers = notifiers
         self._metrics = metrics_store
         self._db = db_config
         self._states = {
@@ -124,6 +190,10 @@ class AlertManager:
             "high_error_rate": AlertState("high_error_rate"),
         }
         self._stop = threading.Event()
+
+    def _notify(self, subject: str, body: str) -> None:
+        for notifier in self._notifiers:
+            notifier.send(subject, body)
 
     def start(self) -> None:
         t = threading.Thread(target=self._loop, daemon=True, name="alert-manager")
@@ -134,7 +204,14 @@ class AlertManager:
                 "check_interval": _CHECK_INTERVAL,
                 "cooldown": _COOLDOWN,
                 "error_rate_threshold": _ERROR_RATE_THRESHOLD,
-                "email_configured": self._notifier.configured,
+                "email_configured": any(
+                    isinstance(n, EmailNotifier) and n.configured
+                    for n in self._notifiers
+                ),
+                "discord_configured": any(
+                    isinstance(n, DiscordNotifier) and n.configured
+                    for n in self._notifiers
+                ),
             },
         )
 
@@ -155,7 +232,16 @@ class AlertManager:
                 "cooldown_seconds": _COOLDOWN,
             },
             "current_metrics": snap,
-            "email_configured": self._notifier.configured,
+            "notifiers": {
+                "email_configured": any(
+                    isinstance(n, EmailNotifier) and n.configured
+                    for n in self._notifiers
+                ),
+                "discord_configured": any(
+                    isinstance(n, DiscordNotifier) and n.configured
+                    for n in self._notifiers
+                ),
+            },
         }
 
     # -----------------------------------------------------------------------
@@ -184,7 +270,7 @@ class AlertManager:
             )
             conn.close()
             if state.resolve():
-                self._notifier.send(
+                self._notify(
                     "[RESOLVED] Service Back Up",
                     f"The database connection has been restored.\n\nTime: {_now()}",
                 )
@@ -192,7 +278,7 @@ class AlertManager:
         except Exception as e:
             logger.warning("db_check_failed", extra={"error": str(e)})
             if state.fire():
-                self._notifier.send(
+                self._notify(
                     "[ALERT] Service Down — DB Unreachable",
                     (
                         "The application cannot reach the database.\n\n"
@@ -213,7 +299,7 @@ class AlertManager:
 
         if is_high:
             if state.fire():
-                self._notifier.send(
+                self._notify(
                     f"[ALERT] High Error Rate: {rate:.0%}",
                     (
                         f"Error rate has exceeded the {_ERROR_RATE_THRESHOLD:.0%} threshold.\n\n"
@@ -227,7 +313,7 @@ class AlertManager:
                 logger.error("alert_fired", extra={"alert": "high_error_rate", **snap})
         else:
             if state.resolve():
-                self._notifier.send(
+                self._notify(
                     "[RESOLVED] Error Rate Normal",
                     f"Error rate has returned to normal: {rate:.1%}\n\nTime: {_now()}",
                 )
