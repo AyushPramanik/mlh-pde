@@ -37,11 +37,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+
   prometheus:
     image: prom/prometheus:v2.51.0
     restart: always
@@ -73,5 +76,6 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   prometheus_data:
   grafana_data:
